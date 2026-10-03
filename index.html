@@ -60,7 +60,9 @@ html, body { margin: 0; height: 100%; background: #111; font-family: -apple-syst
 <div id="app"></div>
 
 <script>
-const API_URL = '/api/chat'
+// ⚠️⚠️⚠️ 下一行，把 sk-你的key 换成你自己的 DeepSeek key ⚠️⚠️⚠️
+const API_KEY = 'sk-e4d0c7a20002415399ead63c039fb18f'
+
 const { createApp, ref, nextTick, onMounted } = Vue
 
 createApp({
@@ -80,6 +82,17 @@ createApp({
     const chatRef = ref(null)
     const loading = ref(false)
 
+    const SYSTEM_PROMPT = `你是贺砚，24岁，男。你说话成熟稳重，温柔，不油腻，不说霸总语录。
+你正在和一个女生用微信聊天。
+规则：
+1. 回复自然，像真人发微信，1~3句话为主。
+2. 有记忆，能记住对方说过的话、名字、情绪，并自然地承接。
+3. 温柔、克制、有分寸，不轻浮，不油腻。
+4. 对方难过时先安慰再回应，不要急着说教。
+5. 不要用"小姐姐""美女""宝贝"之类的称呼，除非对方先要求。
+6. 不要输出括号里的动作描写。
+7. 说中文。`
+
     async function scrollToBottom() {
       await nextTick()
       if (chatRef.value) chatRef.value.scrollTop = chatRef.value.scrollHeight
@@ -98,16 +111,25 @@ createApp({
       await scrollToBottom()
 
       try {
-        const res = await fetch(API_URL, {
+        const res = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + API_KEY,
+          },
           body: JSON.stringify({
-            messages: messages.value.slice(0, aiIndex).map(m => ({ role: m.role, content: m.content })),
+            model: 'deepseek-chat',
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              ...messages.value.slice(0, aiIndex).map(m => ({ role: m.role, content: m.content })),
+            ],
+            stream: true,
+            temperature: 0.8,
           }),
         })
         if (!res.ok) {
           const err = await res.text()
-          messages.value[aiIndex].content = '出错了：' + err
+          messages.value[aiIndex].content = '出错了：' + err.slice(0, 200)
           messages.value[aiIndex].typing = false
           return
         }
@@ -115,7 +137,6 @@ createApp({
         const decoder = new TextDecoder('utf-8')
         let buffer = ''
         messages.value[aiIndex].typing = false
-
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
