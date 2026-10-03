@@ -37,22 +37,33 @@ html, body { margin: 0; height: 100%; background: #111; font-family: -apple-syst
 .msg-row { display: flex; margin-bottom: 14px; align-items: flex-start; gap: 8px; }
 .msg-row.user { flex-direction: row-reverse; }
 .avatar { flex-shrink: 0; width: 38px; height: 38px; border-radius: 4px; background: #2a2a2a; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; }
-.avatar.user-avatar { background: #4ade80; color: #143d1f; }
+.avatar.user-avatar { background: #f7b3c4; color: #6b1f38; }
 .bubble { max-width: 68%; padding: 9px 13px; border-radius: 6px; line-height: 1.5; font-size: 15px; white-space: pre-wrap; word-break: break-word; position: relative; box-shadow: 0 1px 1px rgba(0,0,0,0.05); }
 .bubble.assistant { background: #ffffff; color: #000; }
 .bubble.assistant::before { content: ''; position: absolute; left: -6px; top: 12px; border: 6px solid transparent; border-right-color: #ffffff; border-left: 0; }
 .bubble.user { background: #95ec69; color: #000; }
 .bubble.user::before { content: ''; position: absolute; right: -6px; top: 12px; border: 6px solid transparent; border-left-color: #95ec69; border-right: 0; }
+.bubble img { max-width: 100%; border-radius: 4px; display: block; }
 .typing { display: flex; gap: 3px; padding: 4px 2px; }
 .typing span { width: 6px; height: 6px; border-radius: 50%; background: #999; animation: blink 1.2s infinite; }
 .typing span:nth-child(2) { animation-delay: 0.2s; }
 .typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 60%, 100% { opacity: 0.3; } 30% { opacity: 1; } }
-.input-bar { flex-shrink: 0; display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px; background: #f7f7f7; border-top: 1px solid #d6d6d6; }
+.input-bar { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #f7f7f7; border-top: 1px solid #d6d6d6; }
+.icon-btn { width: 36px; height: 36px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; user-select: none; }
 .input { flex: 1; padding: 9px 14px; border-radius: 6px; border: none; background: #fff; color: #000; font-size: 15px; outline: none; min-width: 0; font-family: inherit; }
 .input::placeholder { color: #b2b2b2; }
-.send-btn { flex-shrink: 0; padding: 9px 16px; border-radius: 6px; border: none; background: #07c160; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; }
+.send-btn { flex-shrink: 0; padding: 9px 14px; border-radius: 6px; border: none; background: #07c160; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; }
 .send-btn:disabled { background: #d0d0d0; color: #f5f5f5; }
+.transfer { background: #f5a623 !important; color: #fff !important; }
+.transfer::before { border-right-color: #f5a623 !important; }
+.msg-row.user .transfer::before { border-left-color: #f5a623 !important; border-right-color: transparent !important; }
+.transfer .t-icon { font-size: 22px; margin-bottom: 4px; }
+.transfer .t-amount { font-size: 18px; font-weight: 600; }
+.transfer .t-note { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+.plus-menu { position: absolute; bottom: 60px; left: 12px; background: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 20; }
+.plus-menu div { padding: 10px 16px; border-radius: 6px; font-size: 14px; cursor: pointer; white-space: nowrap; color: #000; }
+.plus-menu div:active { background: #f0f0f0; }
 .home-bar { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); width: 110px; height: 4px; background: #000; border-radius: 2px; opacity: 0.3; }
 </style>
 </head>
@@ -61,7 +72,8 @@ html, body { margin: 0; height: 100%; background: #111; font-family: -apple-syst
 
 <script>
 const API_URL = '/.netlify/functions/chat'
-const { createApp, ref, nextTick, onMounted } = Vue
+const STORAGE_KEY = 'heyan_chat_history_v1'
+const { createApp, ref, nextTick, onMounted, watch } = Vue
 
 createApp({
   setup() {
@@ -73,12 +85,36 @@ createApp({
     }
     onMounted(() => { updateTime(); setInterval(updateTime, 10000) })
 
-    const messages = ref([
-      { role: 'assistant', content: '在的，今天过得还好吗？' }
-    ])
+    // 从 localStorage 读历史
+    let saved = []
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) saved = JSON.parse(raw)
+    } catch (e) {}
+    if (!Array.isArray(saved) || saved.length === 0) {
+      saved = [{ role: 'assistant', content: '小宝，今天过得怎么样？' }]
+    }
+
+    const messages = ref(saved)
     const input = ref('')
     const chatRef = ref(null)
     const loading = ref(false)
+    const showPlus = ref(false)
+    const fileInput = ref(null)
+
+    // 每次消息变化就存起来
+    watch(messages, (val) => {
+      try {
+        // 图片数据太大，存的时候去掉 image 字段，避免撑爆 localStorage
+        const toSave = val.map(m => {
+          if (m.type === 'image') {
+            return { role: m.role, type: 'image', content: '[图片]', image: '' }
+          }
+          return m
+        })
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+      } catch (e) {}
+    }, { deep: true })
 
     async function scrollToBottom() {
       await nextTick()
@@ -91,19 +127,26 @@ createApp({
       messages.value.push({ role: 'user', content: text })
       input.value = ''
       await scrollToBottom()
+      await askAI()
+    }
 
+    async function askAI() {
       loading.value = true
       const aiIndex = messages.value.length
       messages.value.push({ role: 'assistant', content: '', typing: true })
       await scrollToBottom()
 
       try {
+        const payloadMessages = messages.value
+          .slice(0, aiIndex)
+          .filter(m => m.type !== 'transfer' && m.type !== 'image')
+          .map(m => ({ role: m.role, content: m.content || '' }))
+          .filter(m => m.content)
+
         const res = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: messages.value.slice(0, aiIndex).map(m => ({ role: m.role, content: m.content })),
-          }),
+          body: JSON.stringify({ messages: payloadMessages }),
         })
         if (!res.ok) {
           const err = await res.text()
@@ -115,6 +158,7 @@ createApp({
         const decoder = new TextDecoder('utf-8')
         let buffer = ''
         messages.value[aiIndex].typing = false
+
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -144,7 +188,48 @@ createApp({
       }
     }
 
-    return { nowTime, battery, messages, input, chatRef, send, loading }
+    // 转账
+    async function transfer() {
+      showPlus.value = false
+      const amount = prompt('转账金额（元）：', '520')
+      if (!amount) return
+      const note = prompt('备注：', '给乖宝买点好吃的')
+      messages.value.push({
+        role: 'user',
+        type: 'transfer',
+        amount: amount,
+        note: note || '转账',
+        content: '[转账 ¥' + amount + ']'
+      })
+      await scrollToBottom()
+      await askAI()
+    }
+
+    // 发图片
+    function pickImage() {
+      showPlus.value = false
+      fileInput.value.click()
+    }
+
+    async function onFileChange(e) {
+      const file = e.target.files[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = async (ev) => {
+        messages.value.push({
+          role: 'user',
+          type: 'image',
+          content: '[图片]',
+          image: ev.target.result,
+        })
+        await scrollToBottom()
+        await askAI()
+      }
+      reader.readAsDataURL(file)
+      e.target.value = ''
+    }
+
+    return { nowTime, battery, messages, input, chatRef, send, loading, showPlus, transfer, pickImage, onFileChange, fileInput }
   },
   template: `
     <div class="phone-frame">
@@ -164,16 +249,36 @@ createApp({
         <div class="chat" ref="chatRef">
           <div class="time-stamp">今天</div>
           <div v-for="(msg, i) in messages" :key="i" class="msg-row" :class="msg.role">
-            <div class="avatar" :class="{ 'user-avatar': msg.role === 'user' }">{{ msg.role === 'user' ? '我' : '贺' }}</div>
-            <div class="bubble" :class="msg.role">
+            <div class="avatar" :class="{ 'user-avatar': msg.role === 'user' }">{{ msg.role === 'user' ? '琳' : '贺' }}</div>
+
+            <div v-if="msg.type === 'transfer'" class="bubble transfer" :class="msg.role">
+              <div class="t-icon">💰</div>
+              <div class="t-amount">¥{{ msg.amount }}</div>
+              <div class="t-note">{{ msg.note }}</div>
+            </div>
+
+            <div v-else-if="msg.type === 'image'" class="bubble" :class="msg.role">
+              <img v-if="msg.image" :src="msg.image" />
+              <template v-else>［图片］</template>
+            </div>
+
+            <div v-else class="bubble" :class="msg.role">
               <div v-if="msg.typing" class="typing"><span></span><span></span><span></span></div>
               <template v-else>{{ msg.content }}</template>
             </div>
           </div>
         </div>
+
+        <div v-if="showPlus" class="plus-menu">
+          <div @click="transfer">💰 转账</div>
+          <div @click="pickImage">📷 照片</div>
+        </div>
+
         <div class="input-bar">
+          <div class="icon-btn" @click="showPlus = !showPlus">＋</div>
           <input v-model="input" class="input" type="text" @keyup.enter="send" :disabled="loading" />
           <button class="send-btn" :disabled="!input.trim() || loading" @click="send">发送</button>
+          <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
         </div>
         <div class="home-bar"></div>
       </div>
